@@ -17,8 +17,8 @@
      ================================================================ -->
 <script>
   window.APP_CONFIG = {
-    SUPABASE_URL: "https://issetpfjihreculumwfe.supabase.co",        // e.g. "https://issetpfjihreculumwfe.supabase.co"
-    SUPABASE_ANON_KEY: "sb_publishable_UllNs6irBCtRGP2YWhkqZg_n1uANBRY",   // the publishable / anon key
+    SUPABASE_URL: "https://issetpfjihreculumwfe.supabase.co",
+    SUPABASE_ANON_KEY: "sb_publishable_UllNs6irBCtRGP2YWhkqZg_n1uANBRY",
     RIDER_NAME: "Grace"
   };
 </script>
@@ -178,27 +178,49 @@ const STORE = (() => {
   }
 
   const base = url + "/rest/v1/app_state";
-  const headers = {
-    apikey: key,
-    Authorization: "Bearer " + key,
-    "Content-Type": "application/json"
+
+  // Legacy anon keys are JWTs and want a Bearer header.
+  // Newer sb_publishable_ keys authenticate on the apikey header alone.
+  const headers = { apikey: key, "Content-Type": "application/json" };
+  if (key.startsWith("eyJ")) headers.Authorization = "Bearer " + key;
+
+  const explain = async (r, verb) => {
+    let detail = "";
+    try { const j = await r.json(); detail = j.message || j.hint || ""; } catch (e) {}
+    if (r.status === 401 || r.status === 403)
+      return verb + " refused (" + r.status + "). The key is wrong, or the row policies do not match. " + detail;
+    if (r.status === 404)
+      return verb + " hit a missing table (404). Check the project URL and that app_state exists. " + detail;
+    return verb + " failed (" + r.status + "). " + detail;
   };
 
   return {
     mode: "supabase",
     async load() {
-      const r = await fetch(base + "?id=eq." + KEY + "&select=data", { headers });
-      if (!r.ok) throw new Error("Load failed: " + r.status);
+      let r;
+      try {
+        r = await fetch(base + "?id=eq." + KEY + "&select=data", { headers });
+      } catch (e) {
+        throw new Error("Could not reach " + url + ". The project may be paused, the URL may be wrong, or this device is offline.");
+      }
+      if (!r.ok) throw new Error(await explain(r, "Load"));
       const rows = await r.json();
       return rows.length ? rows[0].data : null;
     },
     async save(d) {
-      const r = await fetch(base, {
-        method: "POST",
-        headers: Object.assign({}, headers, { Prefer: "resolution=merge-duplicates" }),
-        body: JSON.stringify({ id: KEY, data: d, updated_at: new Date().toISOString() })
-      });
-      if (!r.ok) throw new Error("Save failed: " + r.status);
+      let r;
+      try {
+        r = await fetch(base, {
+          method: "POST",
+          headers: Object.assign({}, headers, {
+            Prefer: "resolution=merge-duplicates,return=minimal"
+          }),
+          body: JSON.stringify({ id: KEY, data: d, updated_at: new Date().toISOString() })
+        });
+      } catch (e) {
+        throw new Error("Could not reach " + url + " to save. Check the connection.");
+      }
+      if (!r.ok) throw new Error(await explain(r, "Save"));
     }
   };
 })();
@@ -416,7 +438,7 @@ function App() {
       setLoadErr("");
     } catch (e) {
       if (!silent) {
-        setLoadErr("Could not reach the data store. Working from a local copy, so changes may not reach the other phone.");
+        setLoadErr(e.message || "Could not reach the data store.");
         setData(SEED);
       }
     }
@@ -444,7 +466,7 @@ function App() {
         await STORE.save(data);
         if (alive) setSaveErr("");
       } catch (e) {
-        if (alive) setSaveErr("That change did not save. Check the connection and make the change again.");
+        if (alive) setSaveErr((e.message || "That change did not save.") + " Your edit is still on screen, so try again once it is fixed.");
       } finally {
         if (alive) { setSaving(false); dirty.current = false; }
       }

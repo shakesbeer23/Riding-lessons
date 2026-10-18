@@ -120,6 +120,11 @@ body{
 .pill{font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:20px;border:1px solid var(--tan);color:var(--muted)}
 .pill.ridden{background:var(--paddock);border-color:var(--paddock);color:#EAF0E9}
 .pill.booked{background:var(--brass);border-color:var(--brass);color:#FBF5E4}
+.pill.iea{background:transparent;border-color:var(--leather);color:var(--leather)}
+.row.iea{border-left-color:var(--leather)}
+.form label.check{flex-direction:row;align-items:center;gap:10px;font-size:13px;color:var(--ink);min-height:44px}
+.form label.check input{width:22px;height:22px;min-height:0;accent-color:var(--paddock)}
+
 .lessons-tag{font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:700;background:var(--paddock);color:#EAF0E9;padding:3px 9px;border-radius:5px}
 .lessons-tag.neg{background:var(--barn)}
 .buyline{font-family:Georgia,serif;font-size:19px;font-weight:700;color:var(--leather);margin:7px 0 3px}
@@ -493,11 +498,12 @@ function App() {
     if (!data) return null;
     const bought = data.purchases.reduce((s,p) => s + Number(p.lessons||0), 0);
     const adj = data.adjustments.reduce((s,a) => s + Number(a.amount||0), 0);
-    const used = rides.filter(r => r.effective === "ridden").length;
-    const booked = rides.filter(r => r.effective === "booked").length;
+    const used = rides.filter(r => r.effective === "ridden" && !r.iea).length;
+    const iea = rides.filter(r => r.effective === "ridden" && r.iea).length;
+    const booked = rides.filter(r => r.effective === "booked" && !r.iea).length;
     const paid = data.purchases.reduce((s,p) => s + (p.amount === "" ? 0 : Number(p.amount)||0), 0);
     const paidLessons = data.purchases.reduce((s,p) => p.amount === "" ? s : s + Number(p.lessons||0), 0);
-    return { bought, adj, used, booked, paid, avg: paidLessons ? paid/paidLessons : null, remaining: bought + adj - used };
+    return { bought, adj, used, iea, booked, paid, avg: paidLessons ? paid/paidLessons : null, remaining: bought + adj - used };
   }, [data, rides]);
 
   const spend = useMemo(() => {
@@ -532,12 +538,13 @@ function App() {
     data.purchases.forEach(p => rows.push(["Purchase",p.date,"",
       p.payType==="card" ? "Card: "+p.cardName : p.payType==="check" ? "Check "+p.checkNumber : "Not recorded",
       p.lessons,p.amount,p.perLesson,p.note]));
-    rides.forEach(r => rows.push(["Lesson", r.date||"No date", r.time, r.effective+(r.auto?" (auto)":""),"","","",r.note]));
+    rides.forEach(r => rows.push(["Lesson", r.date||"No date", r.time, r.effective+(r.iea?" (IEA, not counted)":"")+(r.auto?" (auto)":""),"","","",r.note]));
     data.adjustments.forEach(a => rows.push(["Adjustment",a.date,"","",a.amount,"","",a.note]));
     rows.push([]);
     rows.push(["Lessons bought",stats.bought]);
     rows.push(["Adjustments",stats.adj]);
     rows.push(["Lessons used",stats.used]);
+    rows.push(["IEA lessons (not counted)",stats.iea]);
     rows.push(["Lessons left",stats.remaining]);
     rows.push(["Total paid",stats.paid]);
     const csv = rows.map(r => r.map(c => '"' + String(c==null?"":c).replace(/"/g,'""') + '"').join(",")).join("\n");
@@ -580,7 +587,7 @@ function App() {
         </div>
         <div className="punch-foot">
           <span className="bignum">{stats.remaining}</span>
-          <span className="ofnum">of {stats.bought + stats.adj} bought &middot; {stats.used} ridden</span>
+          <span className="ofnum">of {stats.bought + stats.adj} bought &middot; {stats.used} ridden{stats.iea ? " \u00b7 " + stats.iea + " IEA" : ""}</span>
         </div>
         {low && <p className="lowbar">
           {stats.remaining <= 0 ? "The card is empty. Time to buy more."
@@ -637,13 +644,14 @@ function App() {
    ============================================================ */
 function RideLog({ rides, today, onAdd, onSet, onDel }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ date: today, time:"", status:"ridden", note:"" });
+  const [form, setForm] = useState({ date: today, time:"", status:"ridden", note:"", iea:false });
   const [editing, setEditing] = useState(null);
 
   return (
     <section>
       <div className="quick">
         <button className="btn primary" onClick={() => onAdd({date:today,status:"ridden",note:""})}>Rode today</button>
+        <button className="btn" onClick={() => onAdd({date:today,status:"ridden",note:"",iea:true})}>IEA today</button>
         <button className="btn" onClick={() => onAdd({date:"",status:"ridden",note:"Date not recorded"})}>Used one, no date</button>
         <button className="btn" onClick={() => setOpen(o => !o)}>{open ? "Close" : "Add a lesson"}</button>
       </div>
@@ -664,13 +672,17 @@ function RideLog({ rides, today, onAdd, onSet, onDel }) {
               <option value="canceled">Canceled, does not count</option>
             </select>
           </label>
+          <label className="wide check">
+            <input type="checkbox" checked={!!form.iea} onChange={e => setForm(Object.assign({},form,{iea:e.target.checked}))} />
+            IEA lesson, does not count against private lessons
+          </label>
           <label className="wide">Note
             <input value={form.note} placeholder="Instructor, horse, rescheduled from&hellip;"
                    onChange={e => setForm(Object.assign({},form,{note:e.target.value}))} />
           </label>
           <button className="btn primary wide" onClick={() => {
             onAdd(Object.assign({}, form));
-            setForm({date:today,time:"",status:"ridden",note:""});
+            setForm({date:today,time:"",status:"ridden",note:"",iea:false});
             setOpen(false);
           }}>Save lesson</button>
         </div>}
@@ -679,14 +691,17 @@ function RideLog({ rides, today, onAdd, onSet, onDel }) {
 
       <ul className="list">
         {rides.map(r =>
-          <li key={r.id} className={"row " + r.effective}>
+          <li key={r.id} className={"row " + (r.iea && r.effective !== "canceled" ? "iea" : r.effective)}>
             <div className="row-main">
               <div className="row-top">
                 <span className="row-date">
                   {r.date ? fmtDate(r.date) : "No date recorded"}{r.time ? " \u00b7 " + fmtTime(r.time) : ""}
                 </span>
-                <span className={"pill " + r.effective}>
-                  {r.effective === "ridden" ? "Ridden" : r.effective === "booked" ? "Booked" : "Canceled"}
+                <span style={{display:"flex",gap:6}}>
+                  {r.iea && <span className="pill iea">IEA</span>}
+                  <span className={"pill " + r.effective}>
+                    {r.effective === "ridden" ? "Ridden" : r.effective === "booked" ? "Booked" : "Canceled"}
+                  </span>
                 </span>
               </div>
               {r.auto && <p className="autonote">Counted automatically because the day passed. Mark it canceled if she did not ride.</p>}
@@ -701,6 +716,7 @@ function RideLog({ rides, today, onAdd, onSet, onDel }) {
                 {r.effective !== "ridden" && <button className="mini" onClick={() => onSet(r.id,{status:"ridden"})}>Mark ridden</button>}
                 {r.effective !== "booked" && <button className="mini" onClick={() => onSet(r.id,{status:"booked"})}>Mark booked</button>}
                 {r.effective !== "canceled" && <button className="mini" onClick={() => onSet(r.id,{status:"canceled"})}>Mark canceled</button>}
+                <button className="mini" onClick={() => onSet(r.id,{iea:!r.iea})}>{r.iea ? "Make private" : "Make IEA"}</button>
                 <button className="mini" onClick={() => setEditing(editing === r.id ? null : r.id)}>{editing === r.id ? "Done" : "Edit"}</button>
                 <button className="mini warn" onClick={() => onDel(r.id)}>Delete</button>
               </div>
